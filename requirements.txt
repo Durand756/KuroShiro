@@ -1,13 +1,7 @@
-# Version corrigée pour éviter les conflits
+# Version ultra-stable pour déploiement
 Flask==3.0.0
-opencv-python-headless==4.9.0.80
-Pillow==10.2.0
-numpy==1.26.4
+opencv-python-headless==4.8.1.78
+Pillow==10.1.0
+numpy==1.24.4
 Werkzeug==3.0.1
 gunicorn==21.2.0
-
-# Alternative sans rembg (plus stable)
-# rembg==2.0.50
-
-# Dépendances système pour OpenCV
-# Ces packages peuvent nécessiter des dépendances système sur certains environnements
