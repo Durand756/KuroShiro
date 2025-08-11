@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manga Style Converter - Transformez vos dessins</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-icons/1.10.0/font/bootstrap-icons.min.css" rel="stylesheet">
+    <!-- Custom CSS -->
+    <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+</head>
+<body>
+    <!-- Header -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="#">
+                <i class="bi bi-brush"></i> Manga Style Converter
+            </a>
+            <small class="text-light">Transformez vos dessins en style manga/BD</small>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <!-- Zone d'upload -->
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card shadow-lg">
+                    <div class="card-header bg-gradient text-white text-center">
+                        <h3><i class="bi bi-cloud-upload"></i> Importez votre dessin</h3>
+                        <p class="mb-0">Formats acceptés: JPG, PNG (max 16MB)</p>
+                    </div>
+                    <div class="card-body">
+                        <form id="uploadForm" enctype="multipart/form-data">
+                            <div class="mb-4">
+                                <label for="imageFile" class="form-label">
+                                    <strong>Choisir une image:</strong>
+                                </label>
+                                <input type="file" 
+                                       class="form-control form-control-lg" 
+                                       id="imageFile" 
+                                       name="file" 
+                                       accept=".jpg,.jpeg,.png"
+                                       required>
+                                <div class="form-text">
+                                    <i class="bi bi-info-circle"></i> 
+                                    Téléchargez une photo ou un scan de votre dessin papier
+                                </div>
+                            </div>
+                            
+                            <!-- Prévisualisation de l'image -->
+                            <div id="imagePreview" class="mb-4" style="display: none;">
+                                <h5><i class="bi bi-eye"></i> Aperçu de votre image:</h5>
+                                <div class="text-center">
+                                    <img id="previewImg" 
+                                         class="img-fluid rounded shadow" 
+                                         style="max-height: 300px;" 
+                                         alt="Aperçu">
+                                </div>
+                            </div>
+                            
+                            <div class="d-grid">
+                                <button type="submit" 
+                                        class="btn btn-primary btn-lg" 
+                                        id="submitBtn">
+                                    <i class="bi bi-magic"></i> 
+                                    Transformer en style manga
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Zone de chargement -->
+        <div id="loadingSection" class="row justify-content-center mt-4" style="display: none;">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <div class="spinner-border text-primary mb-3" role="status">
+                            <span class="visually-hidden">Traitement en cours...</span>
+                        </div>
+                        <h5>Traitement en cours...</h5>
+                        <div class="progress mb-3">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                 style="width: 100%"></div>
+                        </div>
+                        <small class="text-muted">
+                            <i class="bi bi-gear"></i> Application des filtres manga...
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Zone de résultats -->
+        <div id="resultSection" class="row mt-4" style="display: none;">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-secondary text-white">
+                        <h5><i class="bi bi-image"></i> Image originale</h5>
+                    </div>
+                    <div class="card-body text-center">
+                        <img id="originalImage" 
+                             class="img-fluid rounded shadow" 
+                             alt="Image originale">
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        <h5><i class="bi bi-star"></i> Résultat manga</h5>
+                    </div>
+                    <div class="card-body text-center">
+                        <img id="processedImage" 
+                             class="img-fluid rounded shadow" 
+                             alt="Image traitée">
+                        <div class="mt-3">
+                            <a id="downloadBtn" 
+                               class="btn btn-success btn-lg" 
+                               href="#" 
+                               download>
+                                <i class="bi bi-download"></i> 
+                                Télécharger en haute résolution
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Zone d'erreur -->
+        <div id="errorSection" class="row justify-content-center mt-4" style="display: none;">
+            <div class="col-md-8">
+                <div class="alert alert-danger shadow" role="alert">
+                    <h5><i class="bi bi-exclamation-triangle"></i> Erreur</h5>
+                    <p id="errorMessage">Une erreur s'est produite lors du traitement.</p>
+                    <button type="button" class="btn btn-outline-danger" onclick="resetForm()">
+                        <i class="bi bi-arrow-clockwise"></i> Réessayer
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Instructions -->
+        <div class="row mt-5">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-info text-white">
+                        <h4><i class="bi bi-question-circle"></i> Comment ça marche ?</h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-3 text-center mb-3">
+                                <div class="feature-icon">
+                                    <i class="bi bi-1-circle-fill text-primary" style="font-size: 2rem;"></i>
+                                </div>
+                                <h6>Importez</h6>
+                                <small class="text-muted">Téléchargez votre photo ou scan de dessin</small>
+                            </div>
+                            <div class="col-md-3 text-center mb-3">
+                                <div class="feature-icon">
+                                    <i class="bi bi-2-circle-fill text-primary" style="font-size: 2rem;"></i>
+                                </div>
+                                <h6>Traitement IA</h6>
+                                <small class="text-muted">L'algorithme nettoie et stylise automatiquement</small>
+                            </div>
+                            <div class="col-md-3 text-center mb-3">
+                                <div class="feature-icon">
+                                    <i class="bi bi-3-circle-fill text-primary" style="font-size: 2rem;"></i>
+                                </div>
+                                <h6>Style manga</h6>
+                                <small class="text-muted">Contours nets, trames et effet professionnel</small>
+                            </div>
+                            <div class="col-md-3 text-center mb-3">
+                                <div class="feature-icon">
+                                    <i class="bi bi-4-circle-fill text-primary" style="font-size: 2rem;"></i>
+                                </div>
+                                <h6>Téléchargez</h6>
+                                <small class="text-muted">Récupérez votre dessin en haute qualité</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="bg-dark text-light py-4 mt-5">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-8">
+                    <h5><i class="bi bi-info-circle"></i> À propos</h5>
+                    <p>
+                        Cet outil utilise des algorithmes avancés de traitement d'image pour transformer 
+                        vos dessins en style manga/BD professionnel. 
+                        <strong>Vos fichiers sont automatiquement supprimés après 1 heure</strong> 
+                        pour votre confidentialité.
+                    </p>
+                </div>
+                <div class="col-md-4 text-md-end">
+                    <h5><i class="bi bi-shield-check"></i> Sécurisé & Rapide</h5>
+                    <ul class="list-unstyled">
+                        <li><i class="bi bi-check"></i> Traitement local</li>
+                        <li><i class="bi bi-check"></i> Suppression automatique</li>
+                        <li><i class="bi bi-check"></i> Aucune inscription requise</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        // Prévisualisation de l'image sélectionnée
+        document.getElementById('imageFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    document.getElementById('previewImg').src = e.target.result;
+                    document.getElementById('imagePreview').style.display = 'block';
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // Gestion du formulaire d'upload
+        document.getElementById('uploadForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('imageFile');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('Veuillez sélectionner un fichier');
+                return;
+            }
+
+            // Vérifier la taille du fichier (16MB max)
+            if (file.size > 16 * 1024 * 1024) {
+                alert('Le fichier est trop volumineux (maximum 16MB)');
+                return;
+            }
+
+            // Afficher la zone de chargement
+            document.getElementById('loadingSection').style.display = 'block';
+            document.getElementById('resultSection').style.display = 'none';
+            document.getElementById('errorSection').style.display = 'none';
+            document.getElementById('submitBtn').disabled = true;
+
+            // Préparer les données du formulaire
+            const formData = new FormData();
+            formData.append('file', file);
+
+            // Envoyer la requête
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('loadingSection').style.display = 'none';
+                document.getElementById('submitBtn').disabled = false;
+                
+                if (data.success) {
+                    // Afficher les résultats
+                    document.getElementById('originalImage').src = data.original_url;
+                    document.getElementById('processedImage').src = data.processed_url;
+                    document.getElementById('downloadBtn').href = '/download/' + data.download_filename;
+                    document.getElementById('resultSection').style.display = 'block';
+                    
+                    // Scroll vers les résultats
+                    document.getElementById('resultSection').scrollIntoView({ 
+                        behavior: 'smooth' 
+                    });
+                } else {
+                    // Afficher l'erreur
+                    document.getElementById('errorMessage').textContent = data.error;
+                    document.getElementById('errorSection').style.display = 'block';
+                }
+            })
+            .catch(error => {
+                console.error('Erreur:', error);
+                document.getElementById('loadingSection').style.display = 'none';
+                document.getElementById('submitBtn').disabled = false;
+                document.getElementById('errorMessage').textContent = 'Erreur de connexion';
+                document.getElementById('errorSection').style.display = 'block';
+            });
+        });
+
+        // Fonction pour réinitialiser le formulaire
+        function resetForm() {
+            document.getElementById('uploadForm').reset();
+            document.getElementById('imagePreview').style.display = 'none';
+            document.getElementById('resultSection').style.display = 'none';
+            document.getElementById('errorSection').style.display = 'none';
+            document.getElementById('loadingSection').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
