@@ -62,63 +62,106 @@ cleanup_thread.start()
 
 def remove_background_simple(image):
     """
-    Alternative simple à rembg pour supprimer le fond
-    Utilise la détection de contours et assume que le fond est la couleur dominante
+    Version améliorée de suppression de fond pour dessins
+    Optimisée pour des résultats lisses et propres
     """
     try:
-        # Convertir en HSV pour une meilleure détection de couleur
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        
-        # Créer un masque basé sur la couleur dominante (supposée être le fond)
-        # Calculer la couleur moyenne des bords (probablement le fond)
         height, width = image.shape[:2]
-        border_pixels = []
         
-        # Échantillonner les pixels des bords
-        for i in range(0, height, 10):
-            border_pixels.append(hsv[i, 0])  # Bord gauche
-            border_pixels.append(hsv[i, width-1])  # Bord droit
+        # Méthode 1: Détection du fond par analyse des bords
+        # Échantillonner les pixels des bords pour détecter la couleur de fond
+        border_size = min(20, min(height, width) // 10)
         
-        for j in range(0, width, 10):
-            border_pixels.append(hsv[0, j])  # Bord haut
-            border_pixels.append(hsv[height-1, j])  # Bord bas
+        # Extraire les pixels des bords
+        top_border = image[:border_size, :].reshape(-1, 3)
+        bottom_border = image[-border_size:, :].reshape(-1, 3)
+        left_border = image[:, :border_size].reshape(-1, 3)
+        right_border = image[:, -border_size:].reshape(-1, 3)
         
-        # Calculer la couleur moyenne du fond
-        border_pixels = np.array(border_pixels)
-        mean_color = np.mean(border_pixels, axis=0)
+        border_pixels = np.vstack([top_border, bottom_border, left_border, right_border])
         
-        # Créer un masque pour les pixels similaires au fond
-        lower_bound = np.array([max(0, mean_color[0]-20), 50, 50])
-        upper_bound = np.array([min(179, mean_color[0]+20), 255, 255])
+        # Calculer la couleur dominante du fond (médiane pour robustesse)
+        bg_color = np.median(border_pixels, axis=0).astype(np.uint8)
         
-        mask = cv2.inRange(hsv, lower_bound, upper_bound)
+        print(f"Couleur de fond détectée: {bg_color}")
         
-        # Inverser le masque (nous voulons garder l'objet, pas le fond)
-        mask = cv2.bitwise_not(mask)
+        # Méthode 2: Créer un masque basé sur la distance de couleur
+        # Convertir en LAB pour une meilleure perception des couleurs
+        lab_image = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        lab_bg_color = cv2.cvtColor(bg_color.reshape(1, 1, 3), cv2.COLOR_BGR2LAB)[0, 0]
         
-        # Appliquer des opérations morphologiques pour nettoyer le masque
-        kernel = np.ones((5,5), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        # Calculer la distance euclidienne dans l'espace LAB
+        diff = lab_image.astype(np.float32) - lab_bg_color.astype(np.float32)
+        distance = np.sqrt(np.sum(diff**2, axis=2))
         
-        # Créer l'image avec fond transparent
+        # Seuillage adaptatif basé sur l'écart-type de la distance
+        threshold = np.mean(distance) + 0.8 * np.std(distance)
+        mask = (distance > threshold).astype(np.uint8) * 255
+        
+        # Méthode 3: Améliorer le masque avec des techniques morphologiques
+        # Fermeture pour boucher les petits trous
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_close)
+        
+        # Ouverture pour supprimer le bruit
+        kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_open)
+        
+        # Dilatation légère pour inclure les bords fins
+        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        mask = cv2.dilate(mask, kernel_dilate, iterations=1)
+        
+        # Méthode 4: Lissage du masque pour des bords plus doux
+        # Flou gaussien pour adoucir les bords
+        mask_smooth = cv2.GaussianBlur(mask, (5, 5), 2)
+        
+        # Méthode 5: Détection des contours principaux pour affiner
+        contours, _ = cv2.findContours(mask_smooth, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Garder seulement les gros contours (objets principaux)
+        min_area = (width * height) * 0.01  # Au moins 1% de l'image
+        large_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > min_area]
+        
+        if large_contours:
+            # Créer un masque propre avec les contours principaux
+            mask_clean = np.zeros((height, width), dtype=np.uint8)
+            cv2.fillPoly(mask_clean, large_contours, 255)
+            
+            # Lissage final
+            mask_final = cv2.GaussianBlur(mask_clean, (3, 3), 1)
+        else:
+            # Si pas de gros contours, utiliser le masque lissé
+            mask_final = mask_smooth
+        
+        # Créer l'image résultat avec fond transparent
         result = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)
-        result[:,:,3] = mask  # Canal alpha
+        result[:,:,3] = mask_final  # Canal alpha
         
-        return result, mask
+        return result, mask_final
         
     except Exception as e:
         print(f"Erreur dans remove_background_simple: {e}")
-        # En cas d'erreur, retourner l'image originale avec un masque complet
+        import traceback
+        traceback.print_exc()
+        
+        # En cas d'erreur, utiliser une méthode de fallback simple
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # Seuillage simple: supposer que le fond est plus clair
+        _, mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # Si l'objet est sombre sur fond clair, inverser le masque
+        if np.mean(gray[mask == 255]) < 128:
+            mask = cv2.bitwise_not(mask)
+        
         result = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)
-        result[:,:,3] = 255  # Alpha complet
-        mask = np.ones((image.shape[0], image.shape[1]), dtype=np.uint8) * 255
+        result[:,:,3] = mask
+        
         return result, mask
 
 def process_image_to_manga(image_path, output_path):
     """
-    Traite une image pour la convertir en style manga/BD
-    Version sans rembg pour plus de stabilité
+    Version améliorée pour des résultats manga lisses et propres
     """
     try:
         # 1. Charger l'image
@@ -128,10 +171,14 @@ def process_image_to_manga(image_path, output_path):
         
         print(f"Image chargée: {img.shape}")
         
-        # 2. Supprimer le fond (version simplifiée)
-        img_no_bg, alpha_mask = remove_background_simple(img)
+        # 2. Prétraitement pour améliorer la qualité
+        # Réduction du bruit léger sans flouter les détails
+        img_denoised = cv2.bilateralFilter(img, 9, 75, 75)
         
-        # 3. Convertir en niveaux de gris
+        # 3. Supprimer le fond (version améliorée)
+        img_no_bg, alpha_mask = remove_background_simple(img_denoised)
+        
+        # 4. Convertir en niveaux de gris de manière optimale
         if len(img_no_bg.shape) == 4:  # RGBA
             gray = cv2.cvtColor(img_no_bg[:,:,:3], cv2.COLOR_BGR2GRAY)
         else:  # RGB
@@ -140,62 +187,103 @@ def process_image_to_manga(image_path, output_path):
         
         print(f"Conversion gris: {gray.shape}")
         
-        # 4. Améliorer le contraste avec CLAHE
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+        # 5. Amélioration du contraste adaptative
+        # CLAHE avec paramètres optimisés pour les dessins
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
         enhanced = clahe.apply(gray)
         
-        # 5. Réduction du bruit avant seuillage
-        denoised = cv2.bilateralFilter(enhanced, 9, 75, 75)
+        # 6. Préparation pour un seuillage optimal
+        # Flou léger pour réduire le bruit de numérisation
+        blurred = cv2.GaussianBlur(enhanced, (3, 3), 0)
         
-        # 6. Seuillage adaptatif pour obtenir du noir et blanc pur
-        binary = cv2.adaptiveThreshold(denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                     cv2.THRESH_BINARY, 15, 8)
+        # 7. Seuillage adaptatif optimisé pour dessins
+        # Utiliser plusieurs méthodes et les combiner
         
-        print(f"Seuillage effectué: {binary.shape}")
+        # Méthode 1: Seuillage adaptatif Gaussian
+        binary1 = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                       cv2.THRESH_BINARY, 11, 4)
         
-        # 7. Opérations morphologiques pour nettoyer
-        kernel_small = np.ones((2,2), np.uint8)
-        kernel_medium = np.ones((3,3), np.uint8)
+        # Méthode 2: Seuillage adaptatif Mean
+        binary2 = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_MEAN_C, 
+                                       cv2.THRESH_BINARY, 15, 6)
+        
+        # Méthode 3: Seuillage Otsu pour les zones uniformes
+        _, binary3 = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # Combiner les méthodes (intersection pour plus de précision)
+        binary_combined = cv2.bitwise_and(binary1, binary2)
+        
+        # Utiliser Otsu pour les zones où les autres méthodes donnent du blanc
+        mask_otsu = binary_combined == 255
+        binary_combined[mask_otsu] = binary3[mask_otsu]
+        
+        print(f"Seuillage combiné effectué: {binary_combined.shape}")
+        
+        # 8. Nettoyage morphologique sophistiqué
+        # Éléments structurants plus adaptés aux dessins
+        kernel_line_horizontal = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1))
+        kernel_line_vertical = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
+        kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         
         # Fermeture pour connecter les lignes brisées
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel_small)
-        # Ouverture pour supprimer le bruit
-        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel_small)
-        # Dilatation légère pour renforcer les traits
-        binary = cv2.dilate(binary, kernel_small, iterations=1)
+        binary_clean = cv2.morphologyEx(binary_combined, cv2.MORPH_CLOSE, kernel_small)
         
-        # 8. Amélioration spécifique pour les dessins
-        # Détecter et renforcer les contours
-        edges = cv2.Canny(denoised, 50, 150, apertureSize=3, L2gradient=True)
+        # Fermetures directionnelles pour les lignes fines
+        temp1 = cv2.morphologyEx(binary_clean, cv2.MORPH_CLOSE, kernel_line_horizontal)
+        temp2 = cv2.morphologyEx(binary_clean, cv2.MORPH_CLOSE, kernel_line_vertical)
+        binary_clean = cv2.bitwise_or(temp1, temp2)
         
-        # Combiner le seuillage et les contours
-        combined = cv2.bitwise_or(binary, edges)
+        # Ouverture pour supprimer le bruit ponctuel
+        binary_clean = cv2.morphologyEx(binary_clean, cv2.MORPH_OPEN, kernel_small)
         
-        # 9. Appliquer le masque alpha pour préserver la forme
+        # 9. Amélioration des contours
+        # Détection de contours avec paramètres optimisés
+        edges = cv2.Canny(enhanced, 30, 100, apertureSize=3, L2gradient=True)
+        
+        # Dilatation légère des contours pour les épaissir
+        edges_thick = cv2.dilate(edges, kernel_small, iterations=1)
+        
+        # Combiner seuillage et contours
+        combined = cv2.bitwise_or(binary_clean, edges_thick)
+        
+        # 10. Application du masque alpha de manière lisse
         result = np.ones_like(combined) * 255  # Fond blanc
         
-        # Appliquer le masque : garder seulement les zones d'intérêt
-        mask_binary = alpha_mask > 128
-        result[mask_binary] = combined[mask_binary]
+        # Créer une transition douce avec le masque alpha
+        alpha_normalized = alpha_mask.astype(np.float32) / 255.0
         
-        # 10. Ajouter des trames manga (version améliorée)
-        result_with_effects = add_manga_effects(result, alpha_mask, enhanced)
+        # Appliquer le masque avec transition douce
+        for i in range(result.shape[0]):
+            for j in range(result.shape[1]):
+                if alpha_normalized[i, j] > 0.1:  # Seuil pour éviter le bruit
+                    # Mélange proportionnel basé sur l'alpha
+                    result[i, j] = int(255 * (1 - alpha_normalized[i, j]) + 
+                                     combined[i, j] * alpha_normalized[i, j])
+        
+        # 11. Ajout d'effets manga sophistiqués
+        result_with_effects = add_manga_effects_improved(result, alpha_mask, enhanced)
         
         print(f"Effets manga appliqués: {result_with_effects.shape}")
         
-        # 11. Post-traitement final
-        # Légère amélioration de la netteté
+        # 12. Post-traitement final pour la netteté
+        # Filtre de netteté adaptatif
         kernel_sharpen = np.array([[-1,-1,-1],
                                   [-1, 9,-1],
-                                  [-1,-1,-1]])
-        result_sharp = cv2.filter2D(result_with_effects, -1, kernel_sharpen)
+                                  [-1,-1,-1]]) / 9.0 * 1.2
         
-        # Mélanger avec l'original pour éviter un effet trop fort
-        final_result = cv2.addWeighted(result_with_effects, 0.7, result_sharp, 0.3, 0)
+        result_sharp = cv2.filter2D(result_with_effects.astype(np.float32), -1, kernel_sharpen)
+        result_sharp = np.clip(result_sharp, 0, 255).astype(np.uint8)
         
-        # 12. Sauvegarder le résultat
+        # Mélange subtil pour éviter l'over-sharpening
+        final_result = cv2.addWeighted(result_with_effects, 0.8, result_sharp, 0.2, 0)
+        
+        # 13. Lissage final pour supprimer les artefacts
+        final_result = cv2.medianBlur(final_result, 3)
+        
+        # 14. Sauvegarder le résultat
         cv2.imwrite(output_path, final_result)
-        print(f"Image sauvegardée: {output_path}")
+        print(f"Image sauvegardée avec succès: {output_path}")
         
         return True
         
@@ -205,59 +293,127 @@ def process_image_to_manga(image_path, output_path):
         traceback.print_exc()
         return False
 
-def add_manga_effects(image, alpha_channel, original_gray):
+def add_manga_effects_improved(image, alpha_channel, original_gray):
     """
-    Ajoute des effets de style manga : trames, pointillés, hachures
+    Version améliorée des effets manga pour des résultats lisses et professionnels
     """
     try:
         result = image.copy()
         height, width = image.shape
         
-        # 1. Ajouter des trames de points dans les zones grises moyennes
-        dot_size = 3
-        spacing = 12
+        # 1. Analyser les zones pour un placement intelligent des trames
+        # Créer une carte des niveaux de gris
+        gray_levels = cv2.GaussianBlur(original_gray, (5, 5), 0)
         
-        for y in range(spacing//2, height-spacing//2, spacing):
-            for x in range(spacing//2, width-spacing//2, spacing):
-                if x < width and y < height:
-                    # Vérifier les valeurs des pixels
-                    pixel_val = image[y, x]
-                    alpha_val = alpha_channel[y, x] if alpha_channel is not None else 255
-                    original_val = original_gray[y, x]
-                    
-                    # Ajouter des points dans les zones de gris moyen
-                    if (120 < original_val < 180 and alpha_val > 128 and pixel_val > 200):
-                        # Probabilité basée sur l'intensité du gris
-                        probability = (180 - original_val) / 60.0
-                        if np.random.random() < probability:
-                            # Dessiner un petit point
-                            for dy in range(-dot_size//2, dot_size//2+1):
-                                for dx in range(-dot_size//2, dot_size//2+1):
-                                    if (dx*dx + dy*dy) <= (dot_size//2)**2:
-                                        ny, nx = y + dy, x + dx
+        # 2. Trames de points sophistiquées avec variation de densité
+        dot_patterns = [
+            {'size': 2, 'spacing': 8, 'gray_min': 140, 'gray_max': 180, 'density': 0.7},
+            {'size': 3, 'spacing': 12, 'gray_min': 100, 'gray_max': 140, 'density': 0.5},
+            {'size': 4, 'spacing': 16, 'gray_min': 60, 'gray_max': 100, 'density': 0.3}
+        ]
+        
+        for pattern in dot_patterns:
+            dot_size = pattern['size']
+            spacing = pattern['spacing']
+            gray_min = pattern['gray_min']
+            gray_max = pattern['gray_max']
+            density = pattern['density']
+            
+            # Placement des points avec offset pour éviter la régularité
+            offset_x = spacing // 4
+            offset_y = spacing // 4
+            
+            for y in range(offset_y, height - spacing//2, spacing):
+                for x in range(offset_x, width - spacing//2, spacing):
+                    if x < width and y < height:
+                        pixel_val = image[y, x]
+                        alpha_val = alpha_channel[y, x] if alpha_channel is not None else 255
+                        original_val = gray_levels[y, x]
+                        
+                        # Vérifier si on est dans la bonne zone de gris
+                        if (gray_min <= original_val <= gray_max and 
+                            alpha_val > 128 and pixel_val > 200):
+                            
+                            # Probabilité variable selon l'intensité
+                            probability = density * ((gray_max - original_val) / (gray_max - gray_min))
+                            
+                            if np.random.random() < probability:
+                                # Ajouter de la variation dans la position
+                                jitter_x = int(np.random.normal(0, spacing//8))
+                                jitter_y = int(np.random.normal(0, spacing//8))
+                                center_x = x + jitter_x
+                                center_y = y + jitter_y
+                                
+                                # Dessiner un point avec dégradé pour plus de réalisme
+                                for dy in range(-dot_size, dot_size + 1):
+                                    for dx in range(-dot_size, dot_size + 1):
+                                        ny, nx = center_y + dy, center_x + dx
                                         if 0 <= ny < height and 0 <= nx < width:
-                                            result[ny, nx] = 0  # Noir
+                                            distance = np.sqrt(dx*dx + dy*dy)
+                                            if distance <= dot_size:
+                                                # Gradient du point (plus foncé au centre)
+                                                intensity = max(0, 1 - distance / dot_size)
+                                                current_val = result[ny, nx]
+                                                new_val = int(current_val * (1 - intensity * 0.8))
+                                                result[ny, nx] = max(0, new_val)
         
-        # 2. Ajouter des hachures dans les zones très sombres
-        line_spacing = 8
-        for y in range(0, height, line_spacing):
-            for x in range(width):
-                if y < height and x < width:
-                    original_val = original_gray[y, x]
+        # 3. Hachures directionnelles sophistiquées
+        hatch_patterns = [
+            {'angle': 45, 'spacing': 6, 'thickness': 1, 'gray_min': 40, 'gray_max': 80},
+            {'angle': -45, 'spacing': 8, 'thickness': 1, 'gray_min': 20, 'gray_max': 60},
+            {'angle': 90, 'spacing': 10, 'thickness': 2, 'gray_min': 0, 'gray_max': 40}
+        ]
+        
+        for pattern in hatch_patterns:
+            angle = pattern['angle']
+            spacing = pattern['spacing']
+            thickness = pattern['thickness']
+            gray_min = pattern['gray_min']
+            gray_max = pattern['gray_max']
+            
+            # Créer une matrice de rotation
+            angle_rad = np.radians(angle)
+            cos_a, sin_a = np.cos(angle_rad), np.sin(angle_rad)
+            
+            for y in range(height):
+                for x in range(width):
+                    original_val = gray_levels[y, x]
                     alpha_val = alpha_channel[y, x] if alpha_channel is not None else 255
                     
-                    # Hachures dans les zones sombres
-                    if original_val < 100 and alpha_val > 128:
-                        if (x + y) % 16 < 2:  # Lignes diagonales
-                            result[y, x] = 0
+                    if (gray_min <= original_val <= gray_max and alpha_val > 128):
+                        # Coordonnées rotées
+                        rot_x = cos_a * x - sin_a * y
+                        
+                        # Vérifier si on est sur une ligne de hachure
+                        if int(rot_x) % spacing < thickness:
+                            # Intensité variable selon le niveau de gris
+                            intensity = (gray_max - original_val) / (gray_max - gray_min)
+                            if np.random.random() < intensity:
+                                result[y, x] = max(0, result[y, x] - 100)
         
-        # 3. Améliorer les contours existants
-        # Détecter les bordures des objets noirs
-        kernel = np.ones((3,3), np.uint8)
-        edges = cv2.morphologyEx(result, cv2.MORPH_GRADIENT, kernel)
+        # 4. Amélioration des contours existants
+        # Détecter les bordures des zones noires
+        kernel_edge = np.array([[-1, -1, -1],
+                               [-1,  8, -1],
+                               [-1, -1, -1]])
         
-        # Renforcer les contours
-        enhanced_edges = cv2.dilate(edges, np.ones((2,2), np.uint8), iterations=1)
+        edges = cv2.filter2D((255 - result).astype(np.float32), -1, kernel_edge)
+        edges = np.clip(edges, 0, 255).astype(np.uint8)
+        
+        # Renforcer légèrement les contours
+        mask_edges = edges > 30
+        result[mask_edges] = np.maximum(result[mask_edges] - 50, 0)
+        
+        # 5. Lissage final pour éliminer les artefacts
+        result = cv2.medianBlur(result, 3)
+        
+        return result
+        
+    except Exception as e:
+        print(f"Erreur lors de l'ajout des effets manga: {e}")
+        import traceback
+        traceback.print_exc()
+        return image((2,2), np.uint8), iterations=1)
         result = cv2.bitwise_and(result, cv2.bitwise_not(enhanced_edges))
         
         return result
